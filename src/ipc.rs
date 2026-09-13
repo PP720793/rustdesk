@@ -1416,14 +1416,26 @@ fn user_main_ipc_server_uid() -> ResultType<u32> {
     select_server_uid_for_user_main_ipc(&server_uids, active_uid(), prefer_root)
 }
 
-// Windows-only: pick the session-isolated pipe path for every channel except
-// the deliberately machine-wide, privileged `_service` channel. See the
-// comment on `Config::ipc_path_for_session` in hbb_common for the full
-// rationale (RDS/Citrix hosts running multiple concurrent user sessions of
-// the same RustDesk binary).
+// Windows-only: pick the session-isolated pipe path for every channel, but
+// only when RustDesk is running portable (not installed).
+//
+// This session-scoping is only safe when nothing on the machine ever needs
+// to bridge across sessions over these channels. That holds for the
+// portable, no-install case: every helper process portable mode spawns
+// (including the `_portable_service` SYSTEM helper, via
+// `crate::platform::run_background`/`ShellExecuteW`) stays in the caller's
+// own session. It does NOT hold once RustDesk is installed as a service:
+// the service can elevate into a *different* user's session via
+// `create_process_with_logon`, and the privileged `_service` channel is
+// deliberately machine-wide by design - so when installed, every channel
+// keeps using the original, unmodified shared `Config::ipc_path()`.
+//
+// See the comment on `Config::ipc_path_for_session` in hbb_common for the
+// full rationale (RDS/Citrix hosts running multiple concurrent user sessions
+// of the same RustDesk binary).
 #[cfg(windows)]
 fn ipc_path_for_current_context(postfix: &str) -> ResultType<String> {
-    if postfix == crate::POSTFIX_SERVICE {
+    if crate::platform::is_installed() || postfix == crate::POSTFIX_SERVICE {
         Ok(Config::ipc_path(postfix))
     } else {
         match crate::platform::windows::get_current_process_session_id() {
